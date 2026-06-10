@@ -73,8 +73,6 @@ education. This is the central motivation to revisit the debt definition (next s
 | Language | mixed PT/EN, PT variable names | all code & variables in English |
 | Education measure | hard-coded ANOS_ESTUDO mean | **parametrized**: `education_variable` (ANOS_ESTUDO / NIVEL_INSTRUCAO) × `education_method` (mean/median/mode/min/max) |
 | Member filters | hard-coded adults-with-income | **parametrized**: `filter_adults` (V0403≥18) and `filter_with_income` (V0407==1) toggles |
-| Join correctness | assumed, unchecked | `JoinIntegrityChecker` verifies RENDA_TOTAL agrees across all 3 sources + no orphan UCs |
-| Per-code direction | not analysed | `PerCodeAnalysis` ranks every code by debt/income-vs-education slope, finds low-education debts |
-| OpenAI classifier | external script + API dependency | removed; classifications live only in `DEBT_CATEGORIES` / `code_catalog.py` |
-
-## Known limitations / things to be awa
+| Debt codes | fixed by DEBT_CATEGORIES | **parametrized**: `debt_codes_override` lets the notebook pass an explicit code list (e.g. add `4800101`) without editing the taxonomy |
+| UC sample | only income>0 (hard-coded) | **parametrized**: `keep_only_with_income` (renamed from `drop_zero_income`) and new `keep_only_with_debt` toggle |
+| Join correctness | assumed, unchecked | `JoinIntegrityChecker` verifies RENDA_TOTAL agrees across all 3 

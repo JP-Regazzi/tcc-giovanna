@@ -42,7 +42,7 @@ _RAW: List[Dict] = [
     {"code": "5506001", "label": "JUROS DE EMPRESTIMO (block 55 - absent in extract)", "category": "interest_and_fees"},
     # principal_repayment
     {"code": "4800101", "label": "PAGAMENTO DE EMPRESTIMO (loan repayment)", "category": "principal_repayment"},
-    {"code": "4800102", "label": "EMPRESTIMO (PAGAMENTO) (loan repayment)", "category": "principal_repayment"},
+    {"code": "4800102", "label": "EMPRESTIMO (PAGAMENTO) (loan repayment; rare alt spelling of 4800101, ~37 UCs)", "category": "principal_repayment"},
     {"code": "1000301", "label": "PRESTACAO DO IMOVEL (mortgage instalment)", "category": "principal_repayment"},
     {"code": "4801602", "label": "CREDITO EDUCATIVO (PAGAMENTO) (student-loan repayment)", "category": "principal_repayment"},
     {"code": "4801603", "label": "PAGAMENTO DE CREDITO EDUCATIVO (student-loan repayment)", "category": "principal_repayment"},

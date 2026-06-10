@@ -47,15 +47,17 @@ class DescriptivePlots:
 
     def _by_band(self, df: pd.DataFrame, value_col: str) -> pd.Series:
         """Weighted mean of ``value_col`` per education band, ordered."""
+        _, labels = self.config.education_band_spec()
         out = {}
-        for band in self.config.education_labels:
+        for band in labels:
             sub = df[df["education_band"] == band]
             out[band] = self._wmean(sub[value_col], sub["weight"]) if len(sub) else np.nan
         return pd.Series(out)
 
     def _share_with_debt(self, df: pd.DataFrame) -> pd.Series:
+        _, labels = self.config.education_band_spec()
         out = {}
-        for band in self.config.education_labels:
+        for band in labels:
             sub = df[df["education_band"] == band]
             out[band] = self._wmean(sub["has_debt"], sub["weight"]) * 100 if len(sub) else np.nan
         return pd.Series(out)

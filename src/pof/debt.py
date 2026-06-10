@@ -66,7 +66,7 @@ class DebtAggregator:
         """Per-UC total debt across ALL configured debt codes."""
         return self.aggregate_category(
             despesa_individual, despesa_coletiva,
-            self.config.all_debt_codes(), out_name="total_debt",
+            self.config.effective_debt_codes(), out_name="total_debt",
         )
 
     def aggregate_all_categories(
@@ -112,5 +112,4 @@ class DebtAggregator:
             schema = {k: pl.Utf8 for k in keys}
             schema[out_name] = pl.Float64
             return pl.DataFrame(schema=schema)
-
         return rows.group_by(keys).agg(self._value_expr().sum().alias(out_name))

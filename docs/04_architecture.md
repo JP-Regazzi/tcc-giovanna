@@ -45,6 +45,14 @@ main.ipynb             # thin notebook: import -> check -> build -> plot -> mode
   aggregation methods for the chosen variable and exposes the configured one as the
   `education` column; `DebtModels` and the band split read `education`/the matching
   band spec, so nothing downstream hard-codes a measure.
+- **Debt codes and the UC sample are parametrized too.**
+  `config.debt_codes_override` (a list of V9001 codes) replaces the DEBT_CATEGORIES
+  selection for the headline "total debt" when set — so the notebook can fold in,
+  say, `4800101` without editing the taxonomy; `effective_debt_codes()` resolves it.
+  `config.keep_only_with_income` (drop RENDA_TOTAL≤0; the renamed `drop_zero_income`)
+  and `config.keep_only_with_debt` (restrict to UCs with any debt) gate the sample
+  in `AnalyticalDataset` (`_income_filter` before deriving variables, `_debt_filter`
+  after `has_debt` exists).
 - **`HouseholdBuilder` is vectorized in Polars** (weighted mean via expressions,
   weighted median via sorted cumulative weights + interpolation, weighted mode via
   group-argmax of summed weight). A full build is ~1s, which is what makes the
@@ -91,17 +99,4 @@ main.ipynb             # thin notebook: import -> check -> build -> plot -> mode
   + every debt category, fill no-debt UCs with 0, drop non-positive income, and
   build the derived variables (`debt_to_income`, `has_debt`, `log_debt`,
   `log_income`, `head_is_woman`, `education_band`). This is the one place that
-  decides what the final modelling table looks like.
-
-- **`models.py`** — `DebtModels` implements the two-part (hurdle) approach plus the
-  burden regression. Each part returns a compact, serializable `ModelResult`, and
-  `to_frame` turns the list into a tidy table/CSV. Weighting and robust errors are
-  config-driven.
-
-- **`plots.py`** — `DescriptivePlots` returns a matplotlib `Figure` **and** saves a
-  PNG, so the notebook gets the inline view and the artefact from one call. All
-  bars are population-weighted via the same logic as the models.
-
-## Why these statistical choices
-
-- **Two-part / hurdle mod
+  decides what the f

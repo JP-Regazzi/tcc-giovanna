@@ -125,10 +125,14 @@ taxonomy for documentation but contribute nothing. Do not rely on them.
 - `late_payment_penalties`: `1000201`, `1000801`, `1001001`, `1001101`, `1203201`,
   `1203301` → DESPESA_COLETIVA (blocks 10 & 12). Small counts (1–53 rows each).
 
-## Product classification lives only in code
+### `4800101` vs `4800102` — the same item, not two different debts
 
-All debt-code classifications now live exclusively in `DEBT_CATEGORIES`
-(`src/pof/config.py`) and the full candidate list in `src/pof/code_catalog.py`
-(which also tracks the commented-out / absent codes). The earlier exploratory
-OpenAI classification script and its README have been removed — there is no longer
-any external-API dependency. To add or reclassify a code, ed
+The product registry lists two near-identical block-48 entries:
+
+| Code | Registry description | Rows | UCs |
+|---|---|---|---|
+| `4800101` | PAGAMENTO DE EMPRESTIMO | 14,257 | 12,263 |
+| `4800102` | EMPRESTIMO (PAGAMENTO) | 39 | 37 |
+
+Both mean **loan-principal repayment** (paying off an `EMPRESTIMO`). They sit in
+the same questionnaire block (48

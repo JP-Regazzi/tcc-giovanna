@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +63,10 @@ DEBT_CATEGORIES: Dict[str, DebtCategory] = {
             "2600101": "JUROS DE CHEQUE ESPECIAL (overdraft interest)",
             "2600201": "JUROS DE CARTAO DE CREDITO (credit-card interest)",
             "4800201": "JUROS DE EMPRESTIMO (loan interest)",
-            # The codes below also belong here economically but are commented out
-            # in the original study; enable via config if desired:
+            # The codes below also belong here economically but are NOT active by
+            # default (kept commented to match the original study scope). Enable
+            # them either by uncommenting, or from the notebook via
+            # config.debt_codes_override:
             # "2600401": "SEGURO DE CARTAO DE CREDITO (credit-card insurance)",
             # "2600503": "MANUTENCAO DE CHEQUE ESPECIAL (overdraft maintenance)",
             # "2600801": "TAXA DE CARTAO ESPECIAL (special card fee)",
@@ -82,9 +84,15 @@ DEBT_CATEGORIES: Dict[str, DebtCategory] = {
             "credit repayment. Captures the STOCK of debt being paid down."
         ),
         codes={
-            # All commented out in the original study. Enable to analyse amortization.
+            # Not active by default (kept commented to match the original study
+            # scope). Enable by uncommenting or via config.debt_codes_override.
+            # NOTE: 4800101 (PAGAMENTO DE EMPRESTIMO) is the most-used debt code in
+            # the survey (~12k UCs) and is the one debt that is relatively HIGHER
+            # for LOWER-education households. 4800102 (EMPRESTIMO (PAGAMENTO)) is a
+            # rare alternate spelling of the SAME item (only ~37 UCs) -- see
+            # docs/01 for the full explanation of the difference.
             # "4800101": "PAGAMENTO DE EMPRESTIMO (loan repayment)",
-            # "4800102": "EMPRESTIMO (PAGAMENTO) (loan repayment)",
+            # "4800102": "EMPRESTIMO (PAGAMENTO) (loan repayment, rare variant of 4800101)",
             # "1000301": "PRESTACAO DO IMOVEL (mortgage instalment)",
             # "4801602": "CREDITO EDUCATIVO (PAGAMENTO) (student-loan repayment)",
             # "4801603": "PAGAMENTO DE CREDITO EDUCATIVO (student-loan repayment)",
@@ -210,13 +218,32 @@ class AnalysisConfig:
     filter_with_income: bool = True
     adult_min_age: int = 18
 
+    # --- debt-code selection (PARAMETRIZED) ---------------------------------
+    # By default the debt codes come from DEBT_CATEGORIES (the uncommented ones).
+    # To analyse a custom set without editing the taxonomy, set
+    # ``debt_codes_override`` to an explicit list of V9001 codes from the
+    # notebook -- e.g. add the loan-repayment code 4800101. When set, it REPLACES
+    # the DEBT_CATEGORIES selection for the "total debt" used everywhere
+    # (dataset, models, descriptive plots). Per-category columns are unaffected.
+    debt_codes_override: Optional[List[str]] = None
+
     # --- analytical options -------------------------------------------------
     use_deflated_value: bool = True        # use V8000_DEFLA (vs nominal V8000)
     annualize: bool = True                 # multiply by FATOR_ANUALIZACAO
     apply_weights_descriptive: bool = True # weight means/medians/modes by PESO_FINAL
     apply_weights_regression: bool = True  # use weighted least squares / weighted logit
-    drop_zero_income: bool = True          # remove UCs with RENDA_TOTAL <= 0
     ratio_winsor_quantile: float = 0.99    # winsorize debt/income ratio for OLS
+
+    # --- UC sample filters (PARAMETRIZED) -----------------------------------
+    # keep_only_with_income : drop UCs whose RENDA_TOTAL <= 0 (missing/erroneous,
+    #                         not poverty). Required for the debt/income ratio to
+    #                         be defined; default True. (Replaces the old
+    #                         ``drop_zero_income`` flag.)
+    # keep_only_with_debt   : restrict the dataset to UCs with ANY debt > 0. Useful
+    #                         to study the intensive margin only. Default False
+    #                         (keep the full population, including zero-debt UCs).
+    keep_only_with_income: bool = True
+    keep_only_with_debt: bool = False
 
     # Bands for ANOS_ESTUDO (years). NIVEL_INSTRUCAO uses its own bands.
     education_bins: List[float] = field(default_factory=lambda: list(EDUCATION_BINS))
@@ -282,6 +309,21 @@ class AnalysisConfig:
             for code in cat.code_list:
                 seen.setdefault(code, None)
         return list(seen.keys())
+
+    def effective_debt_codes(self) -> List[str]:
+        """
+        The debt codes actually used for the headline "total debt".
+
+        If ``debt_codes_override`` is set (e.g. from the notebook), it REPLACES the
+        DEBT_CATEGORIES selection; otherwise we fall back to ``all_debt_codes()``.
+        Deduplicated, order-preserving.
+        """
+        if self.debt_codes_override:
+            seen: Dict[str, None] = {}
+            for code in self.debt_codes_override:
+                seen.setdefault(str(code).strip(), None)
+            return list(seen.keys())
+        return self.all_debt_codes()
 
     def ensure_dirs(self) -> None:
         self.figures_dir.mkdir(parents=True, exist_ok=True)

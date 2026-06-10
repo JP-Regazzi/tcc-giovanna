@@ -64,15 +64,31 @@ class AnalyticalDataset:
         debt_cols = ["total_debt"] + [f"debt_{k}" for k in c.debt_categories]
         df = df.with_columns([pl.col(x).fill_null(0.0) for x in debt_cols])
 
-        df = self._quality_filter(df)
+        df = self._income_filter(df)
         df = self._derived_variables(df)
+        df = self._debt_filter(df)
         return df
 
     # -- internals ----------------------------------------------------------
-    def _quality_filter(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Drop UCs with non-positive income (missing/erroneous, not poverty)."""
-        if self.config.drop_zero_income:
+    def _income_filter(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Optionally keep only UCs with positive income (missing/erroneous, not poverty).
+
+        The debt/income ratio is undefined for zero income, so this is on by
+        default; turn it off via config.keep_only_with_income = False.
+        """
+        if self.config.keep_only_with_income:
             df = df.filter(pl.col("household_income") > 0)
+        return df
+
+    def _debt_filter(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Optionally keep only UCs that have ANY debt (total_debt > 0).
+
+        Off by default (the full population, including zero-debt UCs, is the right
+        sample for the access/burden questions). Turn on via
+        config.keep_only_with_debt = True to study only the indebted sub-population.
+        """
+        if self.config.keep_only_with_debt:
+            df = df.filter(pl.col("has_debt") == 1)
         return df
 
     def _derived_variables(self, df: pl.DataFrame) -> pl.DataFrame:
