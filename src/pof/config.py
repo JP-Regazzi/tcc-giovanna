@@ -52,27 +52,41 @@ class DebtCategory:
 # present in DESPESA_INDIVIDUAL or DESPESA_COLETIVA in this extract; they are kept
 # here for documentation completeness but contribute nothing. See the docs.
 DEBT_CATEGORIES: Dict[str, DebtCategory] = {
+    "personal_loan": DebtCategory(
+        key="personal_loan",
+        label="Personal loan costs",
+        description=(
+            "Full cost of personal-loan debt: principal repayment and all associated "
+            "charges (interest, insurance, fees). Questionnaire block 48 codes with "
+            "'EMPRESTIMO' in the registry. This is the one debt category relatively "
+            "HIGHER for LOWER-education households, contrary to the overall pattern."
+        ),
+        codes={
+            "4800101": "PAGAMENTO DE EMPRESTIMO (loan repayment)",
+            "4800102": "EMPRESTIMO (PAGAMENTO) (loan repayment, rare alt phrasing)",
+            "4800201": "JUROS DE EMPRESTIMO (loan interest)",
+            "4800301": "SEGURO DE EMPRESTIMO (loan insurance)",
+        },
+    ),
     "interest_and_fees": DebtCategory(
         key="interest_and_fees",
         label="Interest & banking fees",
         description=(
-            "Cost of credit: interest on overdraft, credit-card interest and loan "
-            "interest. The clearest signal of the PRICE a household pays for debt."
+            "Cost of credit-card and overdraft facilities: interest and service fees. "
+            "The clearest signal of the PRICE households pay for short-term credit. "
+            "(Loan interest now lives in personal_loan.)"
         ),
         codes={
             "2600101": "JUROS DE CHEQUE ESPECIAL (overdraft interest)",
             "2600201": "JUROS DE CARTAO DE CREDITO (credit-card interest)",
-            "4800201": "JUROS DE EMPRESTIMO (loan interest)",
             # The codes below also belong here economically but are NOT active by
-            # default (kept commented to match the original study scope). Enable
-            # them either by uncommenting, or from the notebook via
+            # default. Enable them either by uncommenting, or from the notebook via
             # config.debt_codes_override:
             # "2600401": "SEGURO DE CARTAO DE CREDITO (credit-card insurance)",
             # "2600503": "MANUTENCAO DE CHEQUE ESPECIAL (overdraft maintenance)",
             # "2600801": "TAXA DE CARTAO ESPECIAL (special card fee)",
             # "2601103": "RENOVACAO DE CHEQUE ESPECIAL (overdraft renewal)",
             # "2601201": "TAXA DE DEVOLUCAO DE CHEQUE (bounced-cheque fee)",
-            # "4800301": "SEGURO DE EMPRESTIMO (loan insurance)",
             # "5506001": "JUROS DE EMPRESTIMO (block 55 — absent in this extract)",
         },
     ),
@@ -80,19 +94,14 @@ DEBT_CATEGORIES: Dict[str, DebtCategory] = {
         key="principal_repayment",
         label="Principal repayment",
         description=(
-            "Amortization of the principal: loan and mortgage instalments, student "
-            "credit repayment. Captures the STOCK of debt being paid down."
+            "Amortization of the principal: mortgage instalments and student credit "
+            "repayment. Captures the STOCK of debt being paid down. (Personal-loan "
+            "repayment now lives in personal_loan.)"
         ),
         codes={
             # Not active by default (kept commented to match the original study
-            # scope). Enable by uncommenting or via config.debt_codes_override.
-            # NOTE: 4800101 (PAGAMENTO DE EMPRESTIMO) is the most-used debt code in
-            # the survey (~12k UCs) and is the one debt that is relatively HIGHER
-            # for LOWER-education households. 4800102 (EMPRESTIMO (PAGAMENTO)) is a
-            # rare alternate spelling of the SAME item (only ~37 UCs) -- see
-            # docs/01 for the full explanation of the difference.
-            # "4800101": "PAGAMENTO DE EMPRESTIMO (loan repayment)",
-            # "4800102": "EMPRESTIMO (PAGAMENTO) (loan repayment, rare variant of 4800101)",
+            # scope, which focused on interest/fees and not amortization). Enable by
+            # uncommenting or via config.debt_codes_override.
             # "1000301": "PRESTACAO DO IMOVEL (mortgage instalment)",
             # "4801602": "CREDITO EDUCATIVO (PAGAMENTO) (student-loan repayment)",
             # "4801603": "PAGAMENTO DE CREDITO EDUCATIVO (student-loan repayment)",

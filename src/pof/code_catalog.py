@@ -29,20 +29,21 @@ class CodeInfo:
 # The full set, including commented-out candidates. `active` is reconciled with
 # DEBT_CATEGORIES at import time so it never drifts out of sync.
 _RAW: List[Dict] = [
-    # interest_and_fees
+    # personal_loan (questionnaire block 48, all "EMPRESTIMO" codes)
+    {"code": "4800101", "label": "PAGAMENTO DE EMPRESTIMO (loan repayment)", "category": "personal_loan"},
+    {"code": "4800102", "label": "EMPRESTIMO (PAGAMENTO) (loan repayment; rare alt spelling of 4800101, ~37 UCs)", "category": "personal_loan"},
+    {"code": "4800201", "label": "JUROS DE EMPRESTIMO (loan interest)", "category": "personal_loan"},
+    {"code": "4800301", "label": "SEGURO DE EMPRESTIMO (loan insurance)", "category": "personal_loan"},
+    # interest_and_fees (credit-card and overdraft)
     {"code": "2600101", "label": "JUROS DE CHEQUE ESPECIAL (overdraft interest)", "category": "interest_and_fees"},
     {"code": "2600201", "label": "JUROS DE CARTAO DE CREDITO (credit-card interest)", "category": "interest_and_fees"},
-    {"code": "4800201", "label": "JUROS DE EMPRESTIMO (loan interest)", "category": "interest_and_fees"},
     {"code": "2600401", "label": "SEGURO DE CARTAO DE CREDITO (credit-card insurance)", "category": "interest_and_fees"},
     {"code": "2600503", "label": "MANUTENCAO DE CHEQUE ESPECIAL (overdraft maintenance)", "category": "interest_and_fees"},
     {"code": "2600801", "label": "TAXA DE CARTAO ESPECIAL (special card fee)", "category": "interest_and_fees"},
     {"code": "2601103", "label": "RENOVACAO DE CHEQUE ESPECIAL (overdraft renewal)", "category": "interest_and_fees"},
     {"code": "2601201", "label": "TAXA DE DEVOLUCAO DE CHEQUE (bounced-cheque fee)", "category": "interest_and_fees"},
-    {"code": "4800301", "label": "SEGURO DE EMPRESTIMO (loan insurance)", "category": "interest_and_fees"},
     {"code": "5506001", "label": "JUROS DE EMPRESTIMO (block 55 - absent in extract)", "category": "interest_and_fees"},
-    # principal_repayment
-    {"code": "4800101", "label": "PAGAMENTO DE EMPRESTIMO (loan repayment)", "category": "principal_repayment"},
-    {"code": "4800102", "label": "EMPRESTIMO (PAGAMENTO) (loan repayment; rare alt spelling of 4800101, ~37 UCs)", "category": "principal_repayment"},
+    # principal_repayment (mortgage, student loans)
     {"code": "1000301", "label": "PRESTACAO DO IMOVEL (mortgage instalment)", "category": "principal_repayment"},
     {"code": "4801602", "label": "CREDITO EDUCATIVO (PAGAMENTO) (student-loan repayment)", "category": "principal_repayment"},
     {"code": "4801603", "label": "PAGAMENTO DE CREDITO EDUCATIVO (student-loan repayment)", "category": "principal_repayment"},

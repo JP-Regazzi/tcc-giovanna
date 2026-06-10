@@ -43,10 +43,14 @@ analytical table has **one row per UC**.
   to income — these are the people whose schooling plausibly shaped the
   household's earning and credit capacity. `NIVEL_INSTRUCAO` (ordinal level 1–7) is
   summarized by its **mode**.
-- **Debt** is the household's spending on **financial charges**: interest, banking
-  fees, default charges and late-payment penalties. Each expenditure is taken in
-  **real annual reais** (`V8000_DEFLA × FATOR_ANUALIZACAO`) and summed to the UC.
-  Debt is split into four economic categories (see doc 01 / the config).
+- **Debt** is the household's spending on **personal-loan costs** (principal repayment,
+  interest, insurance). This focuses the analysis on the one debt category that
+  **rises with lower education** — opposite to the overall pattern. Selection: all
+  POF questionnaire block-48 product codes whose registry description contains
+  "EMPRESTIMO". Each expenditure is taken in **real annual reais**
+  (`V8000_DEFLA × FATOR_ANUALIZACAO`) and summed to the UC. For robustness, we
+  also report other debt categories: credit-card/overdraft interest, default charges,
+  and late-payment penalties (see doc 01 / the config).
 
 ## Population weighting
 

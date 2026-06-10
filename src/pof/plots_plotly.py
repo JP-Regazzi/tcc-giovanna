@@ -525,6 +525,56 @@ class DescriptivePlotsPlotly:
             self._save_html(fig, "debt_ratio_distribution_by_education.png")
         return fig
 
+    def debt_ratio_distribution_by_education_no_outliers(
+        self, df: pd.DataFrame, save: bool = True
+    ) -> go.Figure:
+        """
+        Box plots of debt-to-income ratio by education band with outliers removed.
+        Uses the 1.5*IQR rule: values outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR] are removed.
+        """
+        _, labels = self.config.education_band_spec()
+
+        fig = go.Figure()
+
+        for band in labels:
+            sub = df[df["education_band"] == band]
+            if len(sub) == 0:
+                continue
+
+            ratios = pd.to_numeric(sub["debt_to_income"], errors="coerce")
+            ratios = ratios.dropna()
+
+            if len(ratios) == 0:
+                continue
+
+            q1 = ratios.quantile(0.25)
+            q3 = ratios.quantile(0.75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+
+            filtered_ratios = ratios[(ratios >= lower_bound) & (ratios <= upper_bound)]
+
+            fig.add_trace(go.Box(
+                y=filtered_ratios * 100,
+                name=band,
+                boxmean="sd",
+            ))
+
+        fig.update_layout(
+            title="Distribuição da Proporção de Gasto em Empréstimo por Escolaridade<br><sub>(Outliers removidos: 1.5×IQR)</sub>",
+            yaxis_title="Debt-to-Income (%)",
+            xaxis_title="Nível de Escolaridade",
+            hovermode="closest",
+            template="plotly_white",
+            height=600,
+            font=dict(size=12),
+        )
+
+        if save:
+            self._save_html(fig, "debt_ratio_distribution_by_education_no_outliers.png")
+        return fig
+
     def summary_statistics_table(
         self, df: pd.DataFrame, save: bool = True
     ) -> pd.DataFrame:

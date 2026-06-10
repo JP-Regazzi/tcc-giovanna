@@ -119,13 +119,40 @@ taxonomy for documentation but contribute nothing. Do not rely on them.
 
 ### Where each debt code actually lives
 
-- `interest_and_fees`: `2600101`, `2600201` → DESPESA_INDIVIDUAL (block 26);
-  `4800201` → DESPESA_INDIVIDUAL (block 48).
+- `personal_loan`: `4800101`, `4800102`, `4800201`, `4800301` → DESPESA_INDIVIDUAL
+  (block 48). The headline codes dominating by volume.
+- `interest_and_fees`: `2600101`, `2600201` → DESPESA_INDIVIDUAL (block 26).
+  Credit-card and overdraft interest only (loan interest moved to `personal_loan`).
 - `default_charges`: `4802201` → DESPESA_INDIVIDUAL (block 48), only **1 row**.
 - `late_payment_penalties`: `1000201`, `1000801`, `1001001`, `1001101`, `1203201`,
   `1203301` → DESPESA_COLETIVA (blocks 10 & 12). Small counts (1–53 rows each).
 
-### `4800101` vs `4800102` — the same item, not two different debts
+### Block-48 personal-loan selection: why these four codes
+
+The analysis focuses on **personal-loan costs** via a principled code selection: all
+questionnaire block-48 product codes whose registry description contains "EMPRESTIMO".
+This yields four codes capturing the full cost of personal credit:
+
+| Code | Registry description | Rows | UCs | Direction vs education |
+|---|---|---|---|---|
+| `4800101` | PAGAMENTO DE EMPRESTIMO | 14,257 | 12,263 | **lower** (p<1e-15) |
+| `4800102` | EMPRESTIMO (PAGAMENTO) | 39 | 37 | noise / same item |
+| `4800201` | JUROS DE EMPRESTIMO | ≈1,000 | ≈669 | flat / not sig. |
+| `4800301` | SEGURO DE EMPRESTIMO | ≈100 | ≈79 | flat / not sig. |
+
+**Why this selection is not cherry-picked:**
+- Selection criterion is **purely structural**: block 48 + keyword "EMPRESTIMO" in registry
+- Includes all four codes; economists and statisticians agree that principal,
+  interest, and insurance are the complete cost of a loan
+- The per-code analysis (section 7 of the notebook) shows 4800101 is the one
+  debt-service code with a strong lower-education signal — but we deliberately
+  include the flat (4800201, 4800301) and noisy (4800102) codes because they
+  belong economically to the same product
+- **Excludes** mortgage (1000301, block 10), credit-card interest (2600201, block 26),
+  overdraft (2600101, block 26), student loans (4801602/03) — all distinct products
+  with different economic meanings and educational gradients
+
+### `4800101` vs `4800102` — the same item, two phrasings
 
 The product registry lists two near-identical block-48 entries:
 
@@ -134,5 +161,22 @@ The product registry lists two near-identical block-48 entries:
 | `4800101` | PAGAMENTO DE EMPRESTIMO | 14,257 | 12,263 |
 | `4800102` | EMPRESTIMO (PAGAMENTO) | 39 | 37 |
 
-Both mean **loan-principal repayment** (paying off an `EMPRESTIMO`). They sit in
-the same questionnaire block (48
+Both mean **loan-principal repayment** (paying off an `EMPRESTIMO`). The difference is
+purely **interviewer phrasing** — POF product codes ending `…01`, `…02`, `…03` are a
+*preferred phrasing plus secondary phrasings* respondents used for the same item.
+`4800101` is the standard code; `4800102` is a rare alternate spelling.
+
+In the per-code scan, `4800101` shows a strong *negative* slope (higher for
+lower-education households, ~12k UCs). `4800102` shows a weakly *positive* slope on
+only 37 households — pure sampling noise. They must be treated as the **same debt**
+and **merged** in the headline analysis (which they now are, under the `personal_loan`
+category).
+
+## Product classification lives only in code
+
+All debt-code classifications now live exclusively in `DEBT_CATEGORIES`
+(`src/pof/config.py`) and the full candidate list in `src/pof/code_catalog.py`
+(which also tracks the commented-out / absent codes). The earlier exploratory
+OpenAI classification script and its README have been removed — there is no longer
+any external-API dependency. To add or reclassify a code, edit `DEBT_CATEGORIES`
+and (if it is a new candidate) `code_catalog.py`.
