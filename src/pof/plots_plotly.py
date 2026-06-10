@@ -77,6 +77,37 @@ class DescriptivePlotsPlotly:
             out[band] = self._wstd(sub[value_col], sub["weight"]) if len(sub) else np.nan
         return out
 
+    def _by_band_percentiles(self, df: pd.DataFrame, value_col: str, p_lower: float = 25, p_upper: float = 75) -> tuple:
+        """Weighted percentiles of value_col per education band. Returns (lower_dict, upper_dict)."""
+        _, labels = self.config.education_band_spec()
+        lower_out, upper_out = {}, {}
+        for band in labels:
+            sub = df[df["education_band"] == band]
+            if len(sub) == 0:
+                lower_out[band] = np.nan
+                upper_out[band] = np.nan
+            else:
+                v = pd.to_numeric(sub[value_col], errors="coerce")
+                w = pd.to_numeric(sub["weight"], errors="coerce")
+                m = v.notna() & w.notna() & (w > 0)
+                if not m.any():
+                    lower_out[band] = np.nan
+                    upper_out[band] = np.nan
+                else:
+                    vv = v[m].values
+                    ww = w[m].values
+                    # Sort by value
+                    sorted_idx = np.argsort(vv)
+                    vv_sorted = vv[sorted_idx]
+                    ww_sorted = ww[sorted_idx]
+                    # Compute cumulative weight
+                    cum_weight = np.cumsum(ww_sorted)
+                    cum_weight_norm = cum_weight / cum_weight[-1]
+                    # Find percentiles
+                    lower_out[band] = float(np.interp(p_lower / 100, cum_weight_norm, vv_sorted))
+                    upper_out[band] = float(np.interp(p_upper / 100, cum_weight_norm, vv_sorted))
+        return lower_out, upper_out
+
     def _share_with_debt(self, df: pd.DataFrame) -> Dict[str, float]:
         """% with debt per education band."""
         _, labels = self.config.education_band_spec()
@@ -91,15 +122,17 @@ class DescriptivePlotsPlotly:
     ) -> go.Figure:
         """
         Renda mensal por nível de escolaridade.
-        Bar chart with error bars (weighted std) and statistical test.
+        Bar chart with percentile error bars (P25, P75) and statistical test.
         """
         _, labels = self.config.education_band_spec()
         means = self._by_band(df, "household_income")
-        stds = self._by_band_std(df, "household_income")
+        p25s, p75s = self._by_band_percentiles(df, "household_income", p_lower=25, p_upper=75)
 
         bands_plot = [b for b in labels if not np.isnan(means.get(b, np.nan))]
         values = [means[b] for b in bands_plot]
-        errors = [stds[b] for b in bands_plot]
+        # Error bars: distance from mean to percentile
+        lower_errors = [means[b] - p25s[b] for b in bands_plot]
+        upper_errors = [p75s[b] - means[b] for b in bands_plot]
 
         # Statistical test
         stats_result = {}
@@ -111,7 +144,13 @@ class DescriptivePlotsPlotly:
         fig.add_trace(go.Bar(
             x=bands_plot,
             y=values,
-            error_y=dict(type="data", array=errors, visible=True),
+            error_y=dict(
+                type="data",
+                symmetric=False,
+                array=upper_errors,
+                arrayminus=lower_errors,
+                visible=True
+            ),
             marker=dict(color="#2E86AB", line=dict(color="#1B3A5C", width=1.5)),
             text=[f"R$ {v:,.0f}" for v in values],
             textposition="outside",
@@ -144,20 +183,28 @@ class DescriptivePlotsPlotly:
     ) -> go.Figure:
         """
         Gasto anual em empréstimo por nível de escolaridade (all UCs, including zeros).
+        Uses percentile bars (P25, P75) instead of standard deviation.
         """
         _, labels = self.config.education_band_spec()
         means = self._by_band(df, "total_debt")
-        stds = self._by_band_std(df, "total_debt")
+        p25s, p75s = self._by_band_percentiles(df, "total_debt", p_lower=25, p_upper=75)
 
         bands_plot = [b for b in labels if not np.isnan(means.get(b, np.nan))]
         values = [means[b] for b in bands_plot]
-        errors = [stds[b] for b in bands_plot]
+        lower_errors = [means[b] - p25s[b] for b in bands_plot]
+        upper_errors = [p75s[b] - means[b] for b in bands_plot]
 
         fig = go.Figure()
         fig.add_trace(go.Bar(
             x=bands_plot,
             y=values,
-            error_y=dict(type="data", array=errors, visible=True),
+            error_y=dict(
+                type="data",
+                symmetric=False,
+                array=upper_errors,
+                arrayminus=lower_errors,
+                visible=True
+            ),
             marker=dict(color="#C1121F", line=dict(color="#800C0C", width=1.5)),
             text=[f"R$ {v:,.0f}" for v in values],
             textposition="outside",
@@ -184,15 +231,16 @@ class DescriptivePlotsPlotly:
     ) -> go.Figure:
         """
         Gasto em empréstimo / Renda Total por nível de escolaridade.
-        Shows mean debt/income ratio with statistical significance.
+        Shows mean debt/income ratio with percentile bars (P25, P75) and statistical significance.
         """
         _, labels = self.config.education_band_spec()
         means = self._by_band(df, "debt_to_income")
-        stds = self._by_band_std(df, "debt_to_income")
+        p25s, p75s = self._by_band_percentiles(df, "debt_to_income", p_lower=25, p_upper=75)
 
         bands_plot = [b for b in labels if not np.isnan(means.get(b, np.nan))]
         values = [means[b] * 100 for b in bands_plot]  # as percentage
-        errors = [stds[b] * 100 for b in bands_plot]
+        lower_errors = [(means[b] - p25s[b]) * 100 for b in bands_plot]
+        upper_errors = [(p75s[b] - means[b]) * 100 for b in bands_plot]
 
         # Statistical test
         stats_result = {}
@@ -204,7 +252,13 @@ class DescriptivePlotsPlotly:
         fig.add_trace(go.Bar(
             x=bands_plot,
             y=values,
-            error_y=dict(type="data", array=errors, visible=True),
+            error_y=dict(
+                type="data",
+                symmetric=False,
+                array=upper_errors,
+                arrayminus=lower_errors,
+                visible=True
+            ),
             marker=dict(color="#F77F00", line=dict(color="#8B4513", width=1.5)),
             text=[f"{v:.2f}%" for v in values],
             textposition="outside",
@@ -287,32 +341,44 @@ class DescriptivePlotsPlotly:
     ) -> go.Figure:
         """
         Distribuição de gasto em empréstimo apenas entre famílias com dívida.
-        Box plots or bar chart with statistics.
+        Bar chart with percentile error bars (P25, P75).
         """
         df_debt = df[df["has_debt"] == 1].copy()
 
         _, labels = self.config.education_band_spec()
-        debtors_data = []
-        for band in labels:
-            sub = df_debt[df_debt["education_band"] == band]
-            if len(sub) > 0:
-                debtors_data.append({
-                    "education_band": band,
-                    "total_debt": sub["total_debt"].values,
-                    "weight": sub["weight"].values,
-                })
-
-        # Bar chart with mean and std
         bands_plot = []
         means = []
-        stds = []
-        for item in debtors_data:
-            band = item["education_band"]
-            vals = item["total_debt"]
-            wts = item["weight"]
-            means.append(self._wmean(pd.Series(vals), pd.Series(wts)))
-            stds.append(self._wstd(pd.Series(vals), pd.Series(wts)))
-            bands_plot.append(band)
+        lower_errors = []
+        upper_errors = []
+
+        for band in labels:
+            sub = df_debt[df_debt["education_band"] == band]
+            if len(sub) == 0:
+                continue
+
+            mean_val = self._wmean(sub["total_debt"], sub["weight"])
+
+            # Calculate percentiles for this band
+            v = pd.to_numeric(sub["total_debt"], errors="coerce")
+            w = pd.to_numeric(sub["weight"], errors="coerce")
+            m = v.notna() & w.notna() & (w > 0)
+
+            if m.any():
+                vv = v[m].values
+                ww = w[m].values
+                sorted_idx = np.argsort(vv)
+                vv_sorted = vv[sorted_idx]
+                ww_sorted = ww[sorted_idx]
+                cum_weight = np.cumsum(ww_sorted)
+                cum_weight_norm = cum_weight / cum_weight[-1]
+
+                p25_val = float(np.interp(0.25, cum_weight_norm, vv_sorted))
+                p75_val = float(np.interp(0.75, cum_weight_norm, vv_sorted))
+
+                means.append(mean_val)
+                lower_errors.append(mean_val - p25_val)
+                upper_errors.append(p75_val - mean_val)
+                bands_plot.append(band)
 
         # Statistical test
         stats_result = {}
@@ -324,7 +390,13 @@ class DescriptivePlotsPlotly:
         fig.add_trace(go.Bar(
             x=bands_plot,
             y=means,
-            error_y=dict(type="data", array=stds, visible=True),
+            error_y=dict(
+                type="data",
+                symmetric=False,
+                array=upper_errors,
+                arrayminus=lower_errors,
+                visible=True
+            ),
             marker=dict(color="#8338EC", line=dict(color="#4A1A7F", width=1.5)),
             text=[f"R$ {v:,.0f}" for v in means],
             textposition="outside",
