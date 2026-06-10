@@ -135,6 +135,19 @@ EDUCATION_LABELS: List[str] = [
     "Higher education (11+)",
 ]
 
+# Bands for the ordinal NIVEL_INSTRUCAO (1..7), grouped to mirror the ANOS_ESTUDO
+# bands so the two measures are comparable in the descriptive splits:
+#   1 = No instruction | 2 = Lower-fundamental incomplete | 3 = fundamental complete
+#   4 = secondary incomplete | 5 = secondary complete | 6 = higher incomplete
+#   7 = higher complete
+INSTRUCTION_BINS: List[float] = [0.5, 1.5, 3.5, 5.5, 7.5]
+INSTRUCTION_LABELS: List[str] = [
+    "No instruction (1)",
+    "Fundamental (2-3)",
+    "Secondary (4-5)",
+    "Higher (6-7)",
+]
+
 
 @dataclass
 class AnalysisConfig:
@@ -177,17 +190,35 @@ class AnalysisConfig:
     # implicit decimals it is read as 99999.9999. Rows at/above this are dropped.
     value_sentinel: float = 99999.9999
     head_role_code: str = "1"              # V0306 == "01" stripped -> "1"
+
+    # --- education measure (PARAMETRIZED) -----------------------------------
+    # Which person-level schooling variable to summarize per UC, and how.
+    #   education_variable : "ANOS_ESTUDO" (years, 0-16) or "NIVEL_INSTRUCAO"
+    #                        (ordinal level, 1-7). The matching column name is
+    #                        resolved from col_years_study / col_instruction.
+    #   education_method   : "mean" | "median" | "mode" | "min" | "max".
+    #                        NOTE: for the ordinal NIVEL_INSTRUCAO a "mean" is not
+    #                        semantically meaningful; prefer "mode" or "median".
+    education_variable: str = "ANOS_ESTUDO"
+    education_method: str = "mean"
+
+    # --- sample restriction for the education aggregation (PARAMETRIZED) -----
+    # Restrict which household members feed the education/age aggregation.
+    #   filter_adults      : keep only members with age >= adult_min_age (V0403)
+    #   filter_with_income : keep only members who had income/work (V0407 == 1)
+    filter_adults: bool = True
+    filter_with_income: bool = True
     adult_min_age: int = 18
 
     # --- analytical options -------------------------------------------------
     use_deflated_value: bool = True        # use V8000_DEFLA (vs nominal V8000)
     annualize: bool = True                 # multiply by FATOR_ANUALIZACAO
-    adults_with_income_only: bool = True   # restrict schooling agg to earners >=18
     apply_weights_descriptive: bool = True # weight means/medians/modes by PESO_FINAL
     apply_weights_regression: bool = True  # use weighted least squares / weighted logit
     drop_zero_income: bool = True          # remove UCs with RENDA_TOTAL <= 0
     ratio_winsor_quantile: float = 0.99    # winsorize debt/income ratio for OLS
 
+    # Bands for ANOS_ESTUDO (years). NIVEL_INSTRUCAO uses its own bands.
     education_bins: List[float] = field(default_factory=lambda: list(EDUCATION_BINS))
     education_labels: List[str] = field(default_factory=lambda: list(EDUCATION_LABELS))
 
@@ -221,6 +252,28 @@ class AnalysisConfig:
     @property
     def debt_categories(self) -> Dict[str, DebtCategory]:
         return DEBT_CATEGORIES
+
+    # --- education-measure resolution --------------------------------------
+    def education_source_column(self) -> str:
+        """The raw MORADOR column for the configured education variable."""
+        if self.education_variable.upper() == "ANOS_ESTUDO":
+            return self.col_years_study
+        if self.education_variable.upper() == "NIVEL_INSTRUCAO":
+            return self.col_instruction
+        raise ValueError(
+            f"Unknown education_variable '{self.education_variable}'. "
+            "Use 'ANOS_ESTUDO' or 'NIVEL_INSTRUCAO'."
+        )
+
+    def education_output_column(self) -> str:
+        """Name of the aggregated per-UC education column, e.g. 'education_mean'."""
+        return f"education_{self.education_method}"
+
+    def education_band_spec(self):
+        """(bins, labels) appropriate for the configured education variable."""
+        if self.education_variable.upper() == "NIVEL_INSTRUCAO":
+            return list(INSTRUCTION_BINS), list(INSTRUCTION_LABELS)
+        return list(self.education_bins), list(self.education_labels)
 
     def all_debt_codes(self) -> List[str]:
         """Every product code across all categories (deduplicated, order-preserving)."""

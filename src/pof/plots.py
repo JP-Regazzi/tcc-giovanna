@@ -98,8 +98,9 @@ class DescriptivePlots:
             "education_mean": "mean",
             "education_max": "max",
         }
+        var_label = self.config.education_variable
         fig, axes = plt.subplots(1, len(methods), figsize=(18, 4), sharey=True)
-        fig.suptitle("Distribution of households by years of schooling, per aggregation method "
+        fig.suptitle(f"Distribution of households by {var_label}, per aggregation method "
                      "(weighted)", fontweight="bold")
         for ax, (col, label) in zip(axes, methods.items()):
             vals = pd.to_numeric(df[col], errors="coerce")
@@ -108,7 +109,7 @@ class DescriptivePlots:
             counts = tmp.groupby("v")["w"].sum().sort_index()
             counts.plot(kind="bar", ax=ax, color="#4C72B0", edgecolor="black", alpha=0.8)
             ax.set_title(label)
-            ax.set_xlabel("Years of schooling")
+            ax.set_xlabel(var_label)
             ax.tick_params(axis="x", rotation=0)
             ax.grid(axis="y", alpha=0.3)
         axes[0].set_ylabel("Weighted households")

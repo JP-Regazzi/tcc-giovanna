@@ -18,20 +18,46 @@
 ```
 src/pof/
 ├── __init__.py        # public surface + version
-├── config.py          # AnalysisConfig, DebtCategory, DEBT_CATEGORIES, education bins
+├── config.py          # AnalysisConfig (parametrized), DebtCategory, DEBT_CATEGORIES, bands
 ├── io.py              # DictionaryParser, PofReader  (read TXT/Parquet, fix scaling)
 ├── weights.py         # weighted_mean / weighted_median / weighted_mode (pure NumPy)
-├── aggregation.py     # HouseholdBuilder  (persons -> UC, weighted, head via V0306)
+├── aggregation.py     # HouseholdBuilder  (persons -> UC, weighted, VECTORIZED in Polars)
 ├── debt.py            # DebtAggregator    (deflated+annualized debt per UC, by category)
 ├── dataset.py         # AnalyticalDataset (orchestrates the above; derived variables)
+├── integrity.py       # JoinIntegrityChecker (RENDA_TOTAL / UC-key cross-source checks)
+├── code_catalog.py    # full debt-code list incl. commented-out candidates
+├── code_analysis.py   # PerCodeAnalysis (debt/income-vs-education slope per code)
 ├── models.py          # DebtModels        (two-part + burden, weighted, HC3)
 └── plots.py           # DescriptivePlots  (weighted figures; save PNG + return fig)
 
 docs/                  # the four knowledge notes
 figures/               # PNG outputs (generated)
-outputs/               # CSV model summaries (generated)
-main.ipynb             # thin notebook: import -> build -> plot -> model
+outputs/               # CSV/MD reports: models, integrity, per-code analyses (generated)
+main.ipynb             # thin notebook: import -> check -> build -> plot -> model -> per-code
 ```
+
+### Parametrization & performance notes
+
+- **Education is fully parametrized.** `config.education_variable`
+  (ANOS_ESTUDO / NIVEL_INSTRUCAO) × `config.education_method`
+  (mean/median/mode/min/max), plus the member filters `filter_adults` (V0403≥18)
+  and `filter_with_income` (V0407==1). `HouseholdBuilder` computes all five
+  aggregation methods for the chosen variable and exposes the configured one as the
+  `education` column; `DebtModels` and the band split read `education`/the matching
+  band spec, so nothing downstream hard-codes a measure.
+- **`HouseholdBuilder` is vectorized in Polars** (weighted mean via expressions,
+  weighted median via sorted cumulative weights + interpolation, weighted mode via
+  group-argmax of summed weight). A full build is ~1s, which is what makes the
+  per-code analysis (several dataset rebuilds + ~25 weighted regressions per
+  education variable) cheap enough to run inside the notebook.
+- **`JoinIntegrityChecker`** validates the UC join using RENDA_TOTAL: it must be
+  constant within each UC and equal across MORADOR / DESPESA_INDIVIDUAL /
+  DESPESA_COLETIVA, with no orphan expenditure UCs. It also demonstrates (never
+  uses) the row-sum double-counting trap. See docs 01 / 03.
+- **`PerCodeAnalysis`** answers "which debts are higher for LOWER education": for
+  every code in `code_catalog` it fits a weighted OLS of that code's debt/income on
+  the education value and sorts by slope (negative = higher for lower education).
+  Output: `outputs/debt_by_code_vs_{anos_estudo,nivel_instrucao}.{csv,md}`.
 
 ## Module responsibilities (single-responsibility)
 
@@ -78,34 +104,4 @@ main.ipynb             # thin notebook: import -> build -> plot -> model
 
 ## Why these statistical choices
 
-- **Two-part / hurdle model.** The debt distribution is a spike at zero (most UCs
-  have no debt) plus a long right tail. Plain OLS on the level violates its
-  assumptions. Splitting into *access* (logit on `has_debt`) and *volume* (OLS on
-  `log_debt | debt>0`) models the two margins honestly, and the `debt_to_income`
-  OLS captures the relative burden directly.
-- **Weighted everything.** POF is a complex sample; `PESO_FINAL` makes estimates
-  population-representative. The descriptive figures use the same weights as the
-  models, so the two always tell a consistent story.
-- **HC3 robust errors.** Income/expenditure data are heteroskedastic by nature;
-  HC3 is a conservative small-sample-robust correction for the OLS parts.
-- **Mode for ordinal level, mean for interval years.** `NIVEL_INSTRUCAO` is ordinal
-  (1–7); averaging it is meaningless, so we take the weighted mode. `ANOS_ESTUDO`
-  is interval-scaled, so mean/median are valid and the **weighted mean over
-  adults-with-income** is the headline measure (strongest income correlation).
-
-## Extending the analysis
-
-- **Add a debt code or category:** edit `DEBT_CATEGORIES` in `config.py` only.
-- **Turn weighting/deflation/annualization on or off:** flip the booleans on
-  `AnalysisConfig` — every module honours them.
-- **Change the focal schooling measure:** set `DebtModels.FOCAL` (or parametrize
-  it) to `education_median`, etc., for robustness checks.
-- **Add diagnostics:** create a `pof/diagnostics.py` with Jarque-Bera /
-  Breusch-Pagan over `DebtModels` residuals, mirroring the other modules' style.
-
-## Caching & reproducibility
-
-The first run parses the raw TXT and writes `DadosParquet/*.parquet`; subsequent
-runs read the cache. The Parquet files are **derived artefacts** and are
-git-ignored — regenerate them from the TXT at any time. If you change `io.py`'s
-parsing, delete the affected Parquet files so they are rebuilt.
+- **Two-part / hurdle mod

@@ -2,134 +2,196 @@
 Aggregate person-level records (MORADOR) up to the consumption unit (UC).
 
 A UC ("unidade de consumo") is the group of people sharing a dwelling and its
-expenses — effectively the surveyed household. It is keyed by
+expenses -- effectively the surveyed household, keyed by
 (COD_UPA, NUM_DOM, NUM_UC).
 
-Design decisions (and why)
---------------------------
-- Years of schooling (ANOS_ESTUDO): we expose several aggregation methods
-  (min / median / mean / max / weighted-mode). The thesis uses the MEAN over
-  adults-with-income as the headline measure, because the correlation analysis
-  showed it has the strongest link to income. All methods are population-WEIGHTED
-  by PESO_FINAL where a weighted definition exists.
-- Schooling level (NIVEL_INSTRUCAO): ordinal 1..7, so the MEAN is not meaningful;
-  we report the weighted MODE (and median) as the representative level.
-- Head of household: taken from the record with V0306 == "01" (explicit), not by
-  relying on row order. (We verified the first row per UC is always the head, but
-  filtering on the role code is self-documenting and robust.)
-- Household income (RENDA_TOTAL): identical for every member of the UC, so we
-  take the head's value (first). A mean would be wrong.
-- Sample restriction "adults with income": V0403 >= 18 AND V0407 == 1. This is the
-  population whose schooling plausibly shaped the household's earning/credit
-  capacity.
+What is parametrized (via AnalysisConfig)
+-----------------------------------------
+- education_variable : "ANOS_ESTUDO" (years) or "NIVEL_INSTRUCAO" (ordinal level).
+- education_method   : which aggregation becomes the headline `education` column
+                       (mean / median / mode / min / max). All five are computed
+                       and exposed as education_<method>; `education` points at the
+                       configured one.
+- filter_adults      : keep only members with age >= adult_min_age (V0403).
+- filter_with_income : keep only members who had income/work (V0407 == 1).
+
+The education/age statistics are POPULATION-WEIGHTED by PESO_FINAL and computed
+fully vectorized in Polars (no per-group Python loop), so a full build is ~1s and
+the per-code analysis can rebuild the dataset for several configurations cheaply.
+
+Other decisions
+---------------
+- Head of household: V0306 == "01" (explicit), not row order.
+- Household income (RENDA_TOTAL): identical for every UC member (verified), so we
+  take the head's value. A mean would be wrong; a sum would double-count.
 """
 from __future__ import annotations
 
-from typing import Dict, List
-
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from .config import AnalysisConfig
-from . import weights as wstats
+
+
+def _weighted_median_from_lists(s) -> float:
+    """
+    Weighted median with linear interpolation -- the standard survey definition,
+    identical to weights.weighted_median: interpolate the value at cumulative
+    probability 0.5, where each order statistic sits at
+    (cum_weight_inclusive - 0.5*weight) / total_weight.
+
+    Inputs are per-group sorted values (_v), inclusive cumulative weights (_cw) and
+    total weight (_tw).
+    """
+    v = s["_v"]
+    cw = s["_cw"]
+    total = s["_tw"]
+    if total is None or total == 0 or v is None or len(v) == 0:
+        return float("nan")
+    values = np.asarray(v, dtype="float64")
+    cum_inclusive = np.asarray(cw, dtype="float64")
+    weights = np.empty_like(cum_inclusive)
+    weights[0] = cum_inclusive[0]
+    if len(cum_inclusive) > 1:
+        weights[1:] = np.diff(cum_inclusive)
+    pos = (cum_inclusive - 0.5 * weights) / total
+    return float(np.interp(0.5, pos, values))
 
 
 class HouseholdBuilder:
-    """Builds UC-level schooling / demographic tables from MORADOR."""
+    """Builds UC-level education / demographic tables from MORADOR."""
 
     def __init__(self, config: AnalysisConfig):
         self.config = config
 
     # -- public API ---------------------------------------------------------
-    def build(self, morador: pl.DataFrame, adults_with_income_only: bool | None = None) -> pl.DataFrame:
-        """
-        Return one row per UC with weighted schooling, demographic and income
-        columns. If ``adults_with_income_only`` is True the schooling/age
-        aggregations use only members with V0403>=18 and V0407==1.
-        """
-        if adults_with_income_only is None:
-            adults_with_income_only = self.config.adults_with_income_only
-
+    def build(self, morador: pl.DataFrame) -> pl.DataFrame:
         c = self.config
         df = self._normalize_weight(morador)
-
-        # population used for schooling/age aggregation
-        pop = df
-        if adults_with_income_only:
-            pop = df.filter(
-                (pl.col(c.col_age).cast(pl.Float64) >= c.adult_min_age)
-                & (pl.col(c.col_had_income).cast(pl.Float64) == 1)
-            )
-
-        schooling = self._weighted_group_stats(pop)
+        pop = self._restrict_population(df)
+        education = self._weighted_education_stats(pop)
         head = self._head_and_income(df)
-
-        return schooling.join(head, on=list(c.uc_keys), how="inner")
+        out = education.join(head, on=list(c.uc_keys), how="inner")
+        out = out.with_columns(pl.col(c.education_output_column()).alias("education"))
+        return out
 
     # -- internals ----------------------------------------------------------
     def _normalize_weight(self, df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Guarantee PESO_FINAL is on its true scale regardless of how the parquet
-        cache was produced. The genuine per-person weight is on the order of
-        hundreds; if the cached file still has it divided by 1e8 (values < 0.01),
-        we multiply it back.
-        """
+        """Guarantee PESO_FINAL is on its true scale (undo a stale 1e8 over-division)."""
         c = self.config
         w = pl.col(c.col_weight).cast(pl.Float64)
         median_w = df.select(w.median()).item()
         if median_w is not None and median_w < 1.0:
-            df = df.with_columns((w * 1e8).alias(c.col_weight))
-        else:
-            df = df.with_columns(w.alias(c.col_weight))
-        return df
+            return df.with_columns((w * 1e8).alias(c.col_weight))
+        return df.with_columns(w.alias(c.col_weight))
 
-    def _weighted_group_stats(self, pop: pl.DataFrame) -> pl.DataFrame:
-        """Per-UC weighted schooling/level/age statistics via pandas groupby-apply."""
+    def _restrict_population(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Apply the configurable adult / income member filters."""
         c = self.config
-        cols = [
-            *c.uc_keys, c.col_uf,
-            c.col_years_study, c.col_instruction, c.col_age, c.col_weight,
+        conditions = []
+        if c.filter_adults:
+            conditions.append(pl.col(c.col_age).cast(pl.Float64) >= c.adult_min_age)
+        if c.filter_with_income:
+            conditions.append(pl.col(c.col_had_income).cast(pl.Float64) == 1)
+        if not conditions:
+            return df
+        mask = conditions[0]
+        for cond in conditions[1:]:
+            mask = mask & cond
+        return df.filter(mask)
+
+    def _weighted_education_stats(self, pop: pl.DataFrame) -> pl.DataFrame:
+        """Per-UC weighted education (all 5 methods) + age (mean/median), vectorized."""
+        c = self.config
+        keys = list(c.uc_keys)
+        edu_col = c.education_source_column()
+
+        df = pop.select(
+            [*keys, c.col_uf, edu_col, c.col_age, c.col_weight]
+        ).with_columns([
+            pl.col(edu_col).cast(pl.Float64),
+            pl.col(c.col_age).cast(pl.Float64),
+            pl.col(c.col_weight).cast(pl.Float64),
+        ]).drop_nulls(subset=[edu_col])
+
+        education_cols = self._weighted_value_stats(df, keys, edu_col, "education")
+        age_cols = self._weighted_value_stats(
+            df, keys, c.col_age, "age", methods=("mean", "median")
+        )
+        meta = df.group_by(keys).agg([
+            pl.col(c.col_uf).first().alias(c.col_uf),
+            pl.len().alias("n_members_aggregated"),
+        ])
+
+        out = (
+            meta
+            .join(education_cols, on=keys, how="inner")
+            .join(age_cols, on=keys, how="inner")
+        )
+        round_cols = [
+            "education_min", "education_max", "education_mean", "education_median",
+            "education_mode", "age_mean", "age_median",
         ]
-        pdf = pop.select(cols).to_pandas()
-        for col in (c.col_years_study, c.col_instruction, c.col_age, c.col_weight):
-            pdf[col] = pd.to_numeric(pdf[col], errors="coerce")
+        out = out.with_columns([
+            pl.col(col).round().cast(pl.Int64) for col in round_cols if col in out.columns
+        ])
+        return out
 
-        records: List[Dict] = []
-        for keys, g in pdf.groupby(list(c.uc_keys), sort=False):
-            w = g[c.col_weight].to_numpy()
-            study = g[c.col_years_study].to_numpy()
-            level = g[c.col_instruction].to_numpy()
-            age = g[c.col_age].to_numpy()
-            rec = dict(zip(c.uc_keys, keys if isinstance(keys, tuple) else (keys,)))
-            rec[c.col_uf] = g[c.col_uf].iloc[0]
-            # schooling (years) — every method, weighted where defined
-            rec["education_min"] = np.nanmin(study) if len(study) else np.nan
-            rec["education_max"] = np.nanmax(study) if len(study) else np.nan
-            rec["education_mean"] = wstats.weighted_mean(study, w)
-            rec["education_median"] = wstats.weighted_median(study, w)
-            rec["education_mode"] = wstats.weighted_mode(study, w)
-            # schooling level (ordinal) — mode/median only
-            rec["instruction_mode"] = wstats.weighted_mode(level, w)
-            rec["instruction_median"] = wstats.weighted_median(level, w)
-            # age — weighted mean/median for life-cycle control
-            rec["age_mean"] = wstats.weighted_mean(age, w)
-            rec["age_median"] = wstats.weighted_median(age, w)
-            rec["n_members_aggregated"] = int(np.sum(~np.isnan(study)))
-            records.append(rec)
+    def _weighted_value_stats(self, df: pl.DataFrame, keys, value_col: str,
+                              prefix: str,
+                              methods=("min", "max", "mean", "median", "mode")) -> pl.DataFrame:
+        """Per-group weighted statistics for one value column, returned wide."""
+        c = self.config
+        w = pl.col(c.col_weight)
+        v = pl.col(value_col)
 
-        out = pd.DataFrame.from_records(records)
-        # round the integer-scale schooling/level/age columns for readability
-        for col in ["education_min", "education_max", "education_mean", "education_median",
-                    "education_mode", "instruction_mode", "instruction_median",
-                    "age_mean", "age_median"]:
-            out[col] = out[col].round().astype("Int64")
-        return pl.from_pandas(out)
+        aggs = []
+        if "min" in methods:
+            aggs.append(v.min().alias(f"{prefix}_min"))
+        if "max" in methods:
+            aggs.append(v.max().alias(f"{prefix}_max"))
+        if "mean" in methods:
+            aggs.append(((v * w).sum() / w.sum()).alias(f"{prefix}_mean"))
+        base = df.group_by(keys).agg(aggs) if aggs else df.select(keys).unique()
+
+        if "median" in methods:
+            med = (
+                df.sort(value_col)
+                .group_by(keys, maintain_order=True)
+                .agg([pl.col(value_col).alias("_v"), w.alias("_w")])
+                .with_columns([
+                    pl.col("_w").list.eval(pl.element().cum_sum()).alias("_cw"),
+                    pl.col("_w").list.sum().alias("_tw"),
+                ])
+                .with_columns(
+                    pl.struct(["_v", "_cw", "_tw"]).map_elements(
+                        _weighted_median_from_lists, return_dtype=pl.Float64
+                    ).alias(f"{prefix}_median")
+                )
+                .select([*keys, f"{prefix}_median"])
+            )
+            base = base.join(med, on=keys, how="left")
+
+        if "mode" in methods:
+            mode = (
+                df.group_by([*keys, value_col]).agg(w.sum().alias("_tw"))
+                .sort(
+                    [*keys, "_tw", value_col],
+                    descending=[False] * len(keys) + [True, False],
+                )
+                .group_by(keys, maintain_order=True)
+                .agg(pl.col(value_col).first().alias(f"{prefix}_mode"))
+            )
+            base = base.join(mode, on=keys, how="left")
+
+        return base
 
     def _head_and_income(self, df: pl.DataFrame) -> pl.DataFrame:
         """Head-of-household sex + UC income + UC weight, one row per UC."""
         c = self.config
-        head_rows = df.filter(pl.col(c.col_uc_role).str.strip_chars() == c.head_role_code)
+        head_rows = df.filter(
+            pl.col(c.col_uc_role).str.strip_chars() == c.head_role_code
+        )
         return head_rows.group_by(list(c.uc_keys)).agg(
             pl.col(c.col_sex).first().alias("head_sex"),
             pl.col(c.col_household_income).cast(pl.Float64).first().alias("household_income"),

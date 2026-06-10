@@ -10,6 +10,3 @@ openpyxl
 # notebook execution
 jupyter
 nbformat
-# optional: LLM product classification helper (scripts/llm_classify_products.py)
-openai
-tqdm

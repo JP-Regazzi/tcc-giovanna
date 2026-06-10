@@ -5,19 +5,20 @@ The dependent variables are highly skewed (most UCs have zero debt; those with
 debt are very dispersed), which violates plain-OLS assumptions. We therefore use
 a TWO-PART (hurdle) approach plus a relative-burden regression:
 
-  Part 1 — Weighted logistic regression on ``has_debt`` (0/1):
-           does schooling change the PROBABILITY of carrying any debt? (credit access)
+  Part 1 -- Weighted logistic regression on `has_debt` (0/1):
+            does schooling change the PROBABILITY of carrying any debt? (access)
 
-  Part 2 — Weighted OLS on ``log_debt`` for UCs with debt > 0:
-           given access, does schooling change the VOLUME of debt? (intensive margin)
+  Part 2 -- Weighted OLS on `log_debt` for UCs with debt > 0:
+            given access, does schooling change the VOLUME of debt? (intensive margin)
 
-  Part 3 — Weighted OLS on ``debt_to_income`` (winsorized) for all UCs:
-           does schooling change the SHARE of income committed to debt service?
+  Part 3 -- Weighted OLS on `debt_to_income` (winsorized) for all UCs:
+            does schooling change the SHARE of income committed to debt service?
 
-All models are population-weighted by PESO_FINAL when
-``config.apply_weights_regression`` is True, and use heteroskedasticity-robust
-(HC3) standard errors for the OLS parts. Controls: schooling level, log income,
-age, household size proxy, head's sex, and UF fixed effects.
+The focal regressor is `education` -- the per-UC schooling summary produced by the
+configured education_variable + education_method (see config / aggregation). All
+models are population-weighted by PESO_FINAL when config.apply_weights_regression
+is True, and use HC3-robust standard errors for the OLS parts. Controls: log
+income, age, household size proxy, head's sex, and UF fixed effects.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
 from .config import AnalysisConfig
@@ -59,7 +61,9 @@ class ModelResult:
 class DebtModels:
     """Fits the two-part + ratio models on the analytical dataset."""
 
-    FOCAL = "education_mean"
+    FOCAL = "education"
+    _CONTROLS = "log_income + age_mean + n_members_aggregated + head_is_woman + C(UF)"
+    _CONTROLS_NO_INCOME = "age_mean + n_members_aggregated + head_is_woman + C(UF)"
 
     def __init__(self, config: AnalysisConfig):
         self.config = config
@@ -67,25 +71,15 @@ class DebtModels:
     # -- public API ---------------------------------------------------------
     def fit_all(self, df: pd.DataFrame) -> List[ModelResult]:
         data = self._prepare(df)
-        results = []
-        results.append(self.fit_access(data))
-        results.append(self.fit_volume(data))
-        results.append(self.fit_burden(data))
+        results = [self.fit_access(data), self.fit_volume(data), self.fit_burden(data)]
         return [r for r in results if r is not None]
 
     def fit_access(self, data: pd.DataFrame) -> Optional[ModelResult]:
-        """Part 1 — weighted logit on has_debt."""
-        formula = (
-            "has_debt ~ education_mean + C(instruction_mode) + log_income "
-            "+ age_mean + n_members_aggregated + head_is_woman + C(UF)"
-        )
+        """Part 1 -- weighted logit on has_debt."""
+        formula = f"has_debt ~ {self.FOCAL} + {self._CONTROLS}"
         try:
             kw = {"freq_weights": data["weight"]} if self._weighted else {}
-            model = smf.glm(
-                formula, data=data,
-                family=__import__("statsmodels.api", fromlist=["families"]).families.Binomial(),
-                **kw,
-            ).fit()
+            model = smf.glm(formula, data=data, family=sm.families.Binomial(), **kw).fit()
             return self._summarize(
                 "logit_access", model,
                 extra={"odds_ratio": float(np.exp(model.params[self.FOCAL]))},
@@ -95,26 +89,19 @@ class DebtModels:
             return None
 
     def fit_volume(self, data: pd.DataFrame) -> Optional[ModelResult]:
-        """Part 2 — weighted OLS on log_debt | debt>0, HC3 errors."""
+        """Part 2 -- weighted OLS on log_debt | debt>0, HC3 errors."""
         sub = data.dropna(subset=["log_debt"]).copy()
-        formula = (
-            "log_debt ~ education_mean + C(instruction_mode) + log_income "
-            "+ age_mean + n_members_aggregated + head_is_woman + C(UF)"
-        )
-        return self._fit_ols("ols_log_volume", formula, sub,
-                             extra_keys=["rsquared"])
+        formula = f"log_debt ~ {self.FOCAL} + {self._CONTROLS}"
+        return self._fit_ols("ols_log_volume", formula, sub, extra_keys=["rsquared"])
 
     def fit_burden(self, data: pd.DataFrame) -> Optional[ModelResult]:
-        """Part 3 — weighted OLS on winsorized debt_to_income, HC3 errors."""
+        """Part 3 -- weighted OLS on winsorized debt_to_income, HC3 errors."""
         sub = data.copy()
         q = self.config.ratio_winsor_quantile
         cap = sub["debt_to_income"].quantile(q)
         sub["debt_to_income_w"] = sub["debt_to_income"].clip(upper=cap)
-        # income is the denominator, so it is NOT a control here
-        formula = (
-            "debt_to_income_w ~ education_mean + C(instruction_mode) "
-            "+ age_mean + n_members_aggregated + head_is_woman + C(UF)"
-        )
+        # income is the denominator here, so it is NOT a control
+        formula = f"debt_to_income_w ~ {self.FOCAL} + {self._CONTROLS_NO_INCOME}"
         return self._fit_ols("ols_burden", formula, sub, extra_keys=["rsquared"])
 
     # -- internals ----------------------------------------------------------
@@ -124,13 +111,11 @@ class DebtModels:
 
     def _prepare(self, df: pd.DataFrame) -> pd.DataFrame:
         data = df.copy()
-        for col in ["education_mean", "instruction_mode", "log_income", "age_mean",
-                    "n_members_aggregated", "head_is_woman", "debt_to_income",
-                    "log_debt", "has_debt", "weight"]:
+        for col in [self.FOCAL, "log_income", "age_mean", "n_members_aggregated",
+                    "head_is_woman", "debt_to_income", "log_debt", "has_debt", "weight"]:
             if col in data.columns:
                 data[col] = pd.to_numeric(data[col], errors="coerce")
         data["UF"] = data["UF"].astype(str)
-        data["instruction_mode"] = data["instruction_mode"].astype("Int64").astype(str)
         return data
 
     def _fit_ols(self, name: str, formula: str, data: pd.DataFrame,

@@ -18,17 +18,45 @@ Running `main.ipynb` end-to-end produces, on the POF 2017-2018 extract:
 | Upper secondary (8-11) | 10,730 | 4,310 | 7.7% | 0.0321 |
 | Higher education (11+) | 19,898 | 8,521 | 11.0% | 0.0462 |
 
-**Models** (focal term = `education_mean`, all population-weighted):
+**Models** (focal term = `education` = ANOS_ESTUDO mean over adults-with-income,
+all population-weighted; controls: log income, age, household size, head sex, UF):
 
 | Model | Coef | p-value | n | Note |
 |---|---|---|---|---|
-| `logit_access` (P(has debt)) | 0.0996 | <1e-300 | 57,965 | odds-ratio **1.105** per extra year |
-| `ols_log_volume` (log debt \| debt>0) | 0.0563 | 0.011 | 3,831 | ≈ +5.6% debt per extra year |
-| `ols_burden` (debt/income) | 0.00158 | 4e-10 | 57,965 | burden rises with schooling |
+| `logit_access` (P(has debt)) | 0.0683 | <1e-300 | 57,965 | odds-ratio **1.071** per extra year |
+| `ols_log_volume` (log debt \| debt>0) | 0.0760 | 2e-10 | 3,831 | ≈ +7.6% debt per extra year |
+| `ols_burden` (debt/income) | 0.00175 | 3e-38 | 57,965 | burden rises with schooling |
 
-**Reading:** more schooling raises the *probability* of holding debt, the *amount*
-of debt, and the *share of income* committed to it. Education is associated with
-**more credit use and a higher relative burden**, not less.
+(Coefficients are slightly different from the v1.0 numbers because the redundant
+`C(NIVEL_INSTRUCAO)` control was dropped — `education` is now the single,
+configurable schooling measure. Switching the config to NIVEL_INSTRUCAO/mode gives
+the same signs and significance.)
+
+**Reading:** *on average* more schooling raises the probability of holding debt, the
+amount of debt, and the share of income committed to it — more credit use and a
+higher relative burden, not less. **But this is not uniform across debt types** —
+see the per-code analysis below.
+
+## Per-code analysis: which debts run the OTHER way?
+
+`PerCodeAnalysis` (sec. 7 of the notebook) evaluates **every** candidate debt code
+— active and commented-out — by the weighted-OLS slope of its debt/income against
+education. Output: `outputs/debt_by_code_vs_anos_estudo.{csv,md}` and
+`outputs/debt_by_code_vs_nivel_instrucao.{csv,md}`.
+
+**Key finding — higher for LOWER education (both education measures, significant):**
+
+| Code | Label | n UCs | Direction |
+|---|---|---|---|
+| **4800101** | **PAGAMENTO DE EMPRESTIMO** (loan repayment) | 12,061 | strongly higher for lower education (p≈1e-15) |
+| 1203201 | JUROS E MULTA DE ENERGIA ELETRICA (electricity late fees) | 42 | mildly higher for lower education |
+
+`PAGAMENTO DE EMPRESTIMO` (loan-principal repayment) is the **most-used debt code
+in the whole survey** (12,061 UCs) and runs clearly counter to the headline
+pattern. Note it is a **commented-out `principal_repayment` code** — so the
+low-education signal lives in amortization, not in the interest/fee codes currently
+active. Interest, credit-card and mortgage-instalment codes all rise with
+education. This is the central motivation to revisit the debt definition (next steps).
 
 ## What changed versus the original notebook
 
@@ -43,47 +71,10 @@ of debt, and the *share of income* committed to it. Education is associated with
 | Debt categories | Portuguese, by questionnaire block (`dividas_custo`, …) | English, by **economic function** (`interest_and_fees`, `principal_repayment`, `default_charges`, `late_payment_penalties`) |
 | Code organization | one 36-cell notebook with all logic inline, much duplicated | `src/pof` package (SOLID, parametrized) + thin notebook |
 | Language | mixed PT/EN, PT variable names | all code & variables in English |
+| Education measure | hard-coded ANOS_ESTUDO mean | **parametrized**: `education_variable` (ANOS_ESTUDO / NIVEL_INSTRUCAO) × `education_method` (mean/median/mode/min/max) |
+| Member filters | hard-coded adults-with-income | **parametrized**: `filter_adults` (V0403≥18) and `filter_with_income` (V0407==1) toggles |
+| Join correctness | assumed, unchecked | `JoinIntegrityChecker` verifies RENDA_TOTAL agrees across all 3 sources + no orphan UCs |
+| Per-code direction | not analysed | `PerCodeAnalysis` ranks every code by debt/income-vs-education slope, finds low-education debts |
+| OpenAI classifier | external script + API dependency | removed; classifications live only in `DEBT_CATEGORIES` / `code_catalog.py` |
 
-## Known limitations / things to be aware of
-
-- **Sparse debt categories.** `default_charges` has only 1 row in the data, and the
-  `late_payment_penalties` codes have 1–53 rows each. Category-level models are
-  therefore under-powered; the *total* debt models are the reliable ones.
-- **`principal_repayment` is empty by default.** All its codes (loan/mortgage
-  instalments, student-loan repayment) are commented out in the config to match the
-  original study's scope. Enable them in `config.py` if amortization should count
-  as debt — this is a substantive modelling choice, not a bug.
-- **Block-55 codes are absent** from this extract (see doc 01).
-- **Survey design beyond weights.** We weight by `PESO_FINAL` but do not yet use the
-  full complex-survey variance (strata/PSU). Standard errors are HC3-robust, which
-  is reasonable but not the same as a full survey-design variance estimator.
-
-## Suggested next steps (to "finish" the project)
-
-1. **Decide the debt definition deliberately.** Confirm whether
-   `principal_repayment` (amortization) should be included; it materially changes
-   "how indebted" a household looks. Document the choice in the thesis.
-2. **Complex-survey inference.** Consider `statsmodels`/`samplics` survey variance
-   (strata = `ESTRATO_POF`, PSU = `COD_UPA`) for fully correct confidence intervals.
-3. **Per-category models** only where n is adequate (interest_and_fees has enough
-   rows; the others are descriptive only).
-4. **Robustness.** Re-run with `education_median` and `instruction_mode` as the
-   focal schooling measure to show the result is not an artefact of one choice
-   (the package already parametrizes this).
-5. **Diagnostics.** Add the residual normality / heteroskedasticity panels for the
-   volume and burden OLS models (Jarque-Bera, Breusch-Pagan) — the original
-   notebook had these; they can be re-added as a `pof.diagnostics` module.
-6. **Write-up.** Turn the model table + the four-panel figure into the thesis
-   results section; the narrative is "education → more access, more volume, higher
-   relative burden."
-
-## How to run
-
-```bash
-pip install -r requirements.txt
-jupyter lab main.ipynb     # or run all cells
-```
-
-First run parses the TXT files and caches Parquet under `DadosParquet/`; later
-runs read the cache. To force a re-parse (e.g. after changing the reader), delete
-the relevant `DadosParquet/*.parquet`.
+## Known limitations / things to be awa

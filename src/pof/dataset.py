@@ -87,11 +87,14 @@ class AnalyticalDataset:
             pl.col("household_income").log().alias("log_income"),
             (pl.col("head_sex").str.strip_chars() == "2").cast(pl.Int8).alias("head_is_woman"),
         ])
-        # education band (use the headline measure: weighted mean over adults w/ income)
+        # education band, using bins appropriate for the configured education
+        # variable (ANOS_ESTUDO years vs NIVEL_INSTRUCAO ordinal levels) and the
+        # headline `education` column (= the configured aggregation method).
+        bins, labels = c.education_band_spec()
         df = df.with_columns(
-            pl.col("education_mean").cut(
-                breaks=c.education_bins[1:-1],
-                labels=c.education_labels,
+            pl.col("education").cut(
+                breaks=bins[1:-1],
+                labels=labels,
             ).alias("education_band")
         )
         return df

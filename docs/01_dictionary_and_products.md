@@ -125,10 +125,10 @@ taxonomy for documentation but contribute nothing. Do not rely on them.
 - `late_payment_penalties`: `1000201`, `1000801`, `1001001`, `1001101`, `1203201`,
   `1203301` → DESPESA_COLETIVA (blocks 10 & 12). Small counts (1–53 rows each).
 
-## The LLM classification helper (`scripts/llm_classify_products.py`)
+## Product classification lives only in code
 
-A standalone OpenAI-based script that labels every product in the registry as
-debt / not-debt with a justification. It is **exploratory** — used to *discover*
-candidate debt codes — and is **not part of the analytical pipeline**. It needs an
-`OPENAI_API_KEY` and writes `candidatos_divida_llm.csv`. Treat it as a research
-aid, not a dependency.
+All debt-code classifications now live exclusively in `DEBT_CATEGORIES`
+(`src/pof/config.py`) and the full candidate list in `src/pof/code_catalog.py`
+(which also tracks the commented-out / absent codes). The earlier exploratory
+OpenAI classification script and its README have been removed — there is no longer
+any external-API dependency. To add or reclassify a code, ed
