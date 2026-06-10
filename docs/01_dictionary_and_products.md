@@ -1,0 +1,134 @@
+# 01 — Data Dictionary & Product Registry: Learnings
+
+This file records everything we learned from **`Dicionários de váriaveis.xlsx`**
+(the variable dictionary) and **`Cadastro de Produtos.csv`** (the product
+registry). Read this before touching the reading/aggregation code — several silent
+bugs in the original notebook came from misreading these two files.
+
+## Source
+
+The project uses the **IBGE POF 2017-2018** microdata (Pesquisa de Orçamentos
+Familiares — the Brazilian Household Budget Survey). Raw data are fixed-width TXT
+files in `Dados_20230713/`; the byte layout of each file is described in one sheet
+of the Excel dictionary.
+
+## The dictionary (`Dicionários de váriaveis.xlsx`)
+
+- **One sheet per POF table.** Sheets we use: `Morador`, `Despesa Individual`,
+  `Despesa Coletiva`. (Other sheets exist — Domicílio, Inventário, etc. — but the
+  current analysis does not load them.)
+- Each sheet has a header row containing `Posição Inicial`, `Tamanho`, `Decimais`,
+  `Código da variável`, `Descrição`, `Categorias`. The parser locates that header
+  dynamically (it is not always the first row).
+- `Posição Inicial` is **1-based**; the reader converts to 0-based.
+- `Decimais` is the number of **implicit decimals** in the canonical IBGE layout.
+
+### CRITICAL — decimal scaling (silent bug #1)
+
+The dictionary says monetary columns have 2 implicit decimals and `PESO_FINAL`
+has 8. The original reader therefore divided every such column by `10**decimais`.
+
+**But this particular TXT extract already writes the decimal point literally** in
+the text, e.g. `RENDA_TOTAL = "   3855.34"`, `PESO_FINAL = "  690.88373818"`,
+`V8000 = "      7.00"`. Dividing an already-formatted number by 100 (money) or
+1e8 (weights) shrinks it. Symptoms we observed:
+
+- Household income read as **~R$38/month** instead of **~R$3,855/month**.
+- `PESO_FINAL` read as **~0.000007** instead of **~700** — which is why the
+  original notebook silently abandoned weighting altogether.
+
+**Fix (in `src/pof/io.py`):** probe a sample of each numeric field; if the slice
+already contains a `.`, cast straight to float and **do not divide**. After the
+fix, the per-UC weights sum to **68,941,658 households / ~207M people**, matching
+Brazil's 2018 population — the proof the scale is now correct.
+
+## Key MORADOR variables (person level)
+
+| Variable | Meaning | Notes / categories |
+|---|---|---|
+| `COD_UPA`, `NUM_DOM`, `NUM_UC` | UC key | A UC (consumption unit) = the surveyed household |
+| `V0306` | Role in the UC | `01` = **head** (pessoa de referência). 19 categories total. |
+| `V0403` | Age (years) | integer 0–111 |
+| `V0404` | Sex | `1` = man, `2` = woman |
+| `V0407` | Had income / worked in last 12 months | `1` = yes, `2` = no, blank = N/A |
+| `ANOS_ESTUDO` | Years of schooling (derived) | integer **0–16** (16 = "16 or more") |
+| `NIVEL_INSTRUCAO` | Schooling level (derived, **ordinal**) | `1`=No instruction … `7`=Higher complete (7 levels) |
+| `RENDA_TOTAL` | **Monthly** gross UC income (R$) | **identical for every member of the UC** — take the head's value, never a mean |
+| `PESO_FINAL` | Population expansion weight | same for all UCs in a UPA; use for ALL point estimates |
+
+### Head-of-household identification (improvement)
+
+The original code took the **first row** per UC for `sexo_chefe`. We verified that
+the first row per UC is *always* `V0306 == 01` in this extract (58,039 firsts, all
+heads, = 58,039 distinct UCs). It works, but it relies on file ordering. The new
+code **filters `V0306 == '01'` explicitly** — same result, self-documenting,
+robust to re-sorting.
+
+### Schooling level is ORDINAL
+
+`NIVEL_INSTRUCAO` is 1..7. A **mean has no meaning** on an ordinal scale, so we
+report the **weighted mode** (and median) as the representative level, never the
+mean. `ANOS_ESTUDO` (years) is interval-scaled, so mean/median/etc. are all valid
+there.
+
+## Key DESPESA variables (expenditure level)
+
+Present in both `Despesa Individual` and `Despesa Coletiva`:
+
+| Variable | Meaning | Notes |
+|---|---|---|
+| `V9001` | Product/expense code | 7-digit string; the debt codes filter on this |
+| `V8000` | Nominal value (R$) | **sentinel `9999999.99`** (read as `99999.9999`) = "ignored/undetermined" → drop these rows |
+| `V8000_DEFLA` | **Deflated** value (R$) | = `V8000 × DEFLATOR`; the column IBGE says to use for point estimates |
+| `DEFLATOR` | Inflation-correction factor | already embedded in `V8000_DEFLA` |
+| `FATOR_ANUALIZACAO` | Annualization factor | **1 / 4 / 12 / 52** — different questionnaire blocks use different reference periods |
+| `PESO_FINAL` | Population weight | same meaning as in MORADOR |
+
+### CRITICAL — deflation & annualization (silent bug #2)
+
+The original notebook was **inconsistent**: the main aggregation (cell 11) summed
+`V8000_DEFLA`, but every per-group and per-model cell summed the **nominal**
+`V8000`. And **nothing** applied `FATOR_ANUALIZACAO`.
+
+For the debt rows in this extract, `FATOR_ANUALIZACAO ∈ {1, 12}` — i.e. some rows
+are monthly and some annual. **Summing them raw adds monthly reais to annual
+reais**, which is meaningless. The canonical debt value is now everywhere:
+
+```
+debt_value = V8000_DEFLA × FATOR_ANUALIZACAO        # real annual R$
+```
+
+(controlled by `config.use_deflated_value` and `config.annualize`.)
+
+## The product registry (`Cadastro de Produtos.csv`)
+
+- **Tab-separated**, 3 columns: `QUADRO` (questionnaire block), `CÓDIGO DO
+  PRODUTO`, `DESCRIÇÃO DO PRODUTO`. (Note: it is *not* comma-separated despite the
+  `.csv` extension; the sibling `Cadastro de Produtos.xls` is the same data.)
+- We validated **all 25 debt codes** used in the notebook (commented + uncommented)
+  against this registry. **Every code maps to the expected product** — the labels
+  in the original notebook were correct, just abbreviated (e.g. the registry adds
+  "(JUROS, MULTA, ETC.)" to the rent/condo/IPTU surcharge descriptions).
+
+### Codes that exist in the dictionary but NOT in the data
+
+Two codes from questionnaire **block 55** — `5506001` (loan interest) and
+`5501602` (loan seizure) — appear in the registry but have **zero rows** in
+`DESPESA_INDIVIDUAL`/`DESPESA_COLETIVA` in this extract. They are kept in the
+taxonomy for documentation but contribute nothing. Do not rely on them.
+
+### Where each debt code actually lives
+
+- `interest_and_fees`: `2600101`, `2600201` → DESPESA_INDIVIDUAL (block 26);
+  `4800201` → DESPESA_INDIVIDUAL (block 48).
+- `default_charges`: `4802201` → DESPESA_INDIVIDUAL (block 48), only **1 row**.
+- `late_payment_penalties`: `1000201`, `1000801`, `1001001`, `1001101`, `1203201`,
+  `1203301` → DESPESA_COLETIVA (blocks 10 & 12). Small counts (1–53 rows each).
+
+## The LLM classification helper (`scripts/llm_classify_products.py`)
+
+A standalone OpenAI-based script that labels every product in the registry as
+debt / not-debt with a justification. It is **exploratory** — used to *discover*
+candidate debt codes — and is **not part of the analytical pipeline**. It needs an
+`OPENAI_API_KEY` and writes `candidatos_divida_llm.csv`. Treat it as a research
+aid, not a dependency.

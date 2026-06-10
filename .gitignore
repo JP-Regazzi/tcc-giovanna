@@ -1,0 +1,36 @@
+# ---- Raw & derived POF data (regenerated from source; too large for git) ----
+Dados_20230713/
+DadosParquet/
+*.parquet
+
+# ---- Source spreadsheets kept out except the variable dictionary ----
+# The dictionary IS needed by the reader, so it is force-added in the repo.
+Cadastro de Produtos.xls
+
+# ---- Generated analytical outputs ----
+figures/
+outputs/
+analise_dividas_por_grupo.csv
+analise_dividas_por_grupo_plotly.csv
+anova_por_grupo.csv
+candidatos_divida_strita.csv
+candidatos_divida_llm.csv
+debug_modelagem_dividas_summary.csv
+diagnosticos_por_grupo.csv
+modelos_por_grupo.csv
+modelos_relacao_estudo_divida.csv
+modelos_relacao_estudo_divida_medidas.csv
+
+# ---- Scratch / legacy ----
+ler_dados_old.ipynb
+nb_dump*.txt
+~$*.xlsx
+~$*.xls
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
